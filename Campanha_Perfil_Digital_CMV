@@ -1,0 +1,184 @@
+/*
+
+		78251| Acompanhamento Campanha Comportamento
+		
+		O que precisa ser feito: Precisamos acompanhar os resultados da campanha que iniciou no dia 22/10 que incentiva os clientes da Móvel a utilizarem os canais digitais
+
+	Vamos trabalhar o público que apenas liga na Central com perfil analógico, semi analógico, digital e semi digital e também os clientes que ligam na central e que acessam algum dos canais digital, também com perfil analógico, semi analógico, digital e semi digital 
+
+	O objetivo é acompanhar se, após receberem o incentivo, esses clientes migrem para alguém canal digital
+
+	+ detalhes: 
+	O card pode ser concluído quando (específico): O card pode ser concluído quando conseguirmos analisar os clientes que receberam o incentivo e entender se a comunicação foi efetiva ou não. Obrigada
+
+	TABELAS:
+		DWH 
+			U92047747.SQDAA_FT_COMP_ATM_CMV;
+			
+		SAS 
+			Table_name: WAGNER.CAMPANHA_SQDAA_ATEND1_202008
+			Table_name: WAGNER.CAMPANHA_SQDAA_ATEND2_202008
+			Table_name: WAGNER.CAMPANHA_SQDAA_ATEND3_202008
+			Table_name: WAGNER.CAMPANHA_SQDAA_ATEND4_202008
+
+		INN (WILL)
+		SELECT * FROM N0074570.SQDAA_CAMP_SLIGA_ATEND_CMV;
+				N0074570.SQDAA_CAMP_SLIGA_FATURA_CMV 
+				N0074570.SQDAA_CAMP_SLIGA_RESTIT_CMV 
+				N0074570.SQDAA_CAMP_SLIGA_CADASTRO_CMV 
+				N0074570.SQDAA_CAMP_SLIGA_OFERTAS_CMV 
+		- 
+				N0074570.SQDAA_CAMP_SLIGA_RECARGA_CMV 
+				N0074570.SQDAA_CAMP_SLIGA_CADASTRO_CMV 
+				N0074570.SQDAA_CAMP_SLIGA_PAGAMENTO_CMV 
+				N0074570.SQDAA_CAMP_SLIGA_FATURA_CMV 
+ 
+		
+*/
+			
+/*---===========================================================================================================================================================================
+			APURAÇÃO DO RESULTADO
+
+
+---===========================================================================================================================================================================
+*/
+
+DROP TABLE TMP_SQDAA_CMP_PRF_DIG_CMV_01A;
+CREATE TABLE TMP_SQDAA_CMP_PRF_DIG_CMV_01A COMPRESS FOR QUERY HIGH PARALLEL 256 NOLOGGING AS
+SELECT /*+PARALLEL (32)*/---------------------------------------------------------------------------------------ETAPA 01A CLIENTES QUE ACESSARAM
+  DISTINCT
+  TRUNC(CMP.DAT_MOVIMENTO) AS DAT_MOVIMENTO
+  ,CMP.NUM_NTC
+  ,CMP.DW_NUM_NTC
+  ,CMP.STS_ATENDIMENTO
+  ,1 AS FLG_ACESSO_CAMP
+  
+FROM U92047747.SQDAA_FT_COMP_ATM_CMV CMP
+INNER JOIN 
+  DWH.BI_FP_ASSINANTE_ATEND_FECHADO MC ON CMP.NUM_NTC = MC.NUM_NTC 
+    WHERE 0 = 0
+      AND MC.DW_METODO_CONTATO IN (81,411,451,701,709,791) 		  
+		  AND MC.DSC_OBSERVACAO_ATENDIMENTO LIKE '%Autenticação de usuário%'
+		  AND MC.DAT_INICIO_ATENDIMENTO BETWEEN TO_DATE('20201020', 'RRRRMMDD') AND  TO_DATE('20201231', 'RRRRMMDD')
+GROUP BY 
+  TRUNC(CMP.DAT_MOVIMENTO)
+  ,CMP.NUM_NTC
+  ,CMP.DW_NUM_NTC
+  ,CMP.STS_ATENDIMENTO
+  ;
+
+DROP TABLE TMP_SQDAA_CMP_PRF_DIG_CMV_01B;
+CREATE TABLE TMP_SQDAA_CMP_PRF_DIG_CMV_01B COMPRESS FOR QUERY HIGH PARALLEL 256 NOLOGGING AS
+SELECT /*+PARALLEL (32)*/ ---------------------------------------------------------------------------------------ETAPA 01B CLIENTES QUE LIGARAM
+  DISTINCT
+  TRUNC(CMP.DAT_MOVIMENTO) AS DAT_MOVIMENTO
+  ,CMP.NUM_NTC
+  ,CMP.DW_NUM_NTC
+  ,CMP.STS_ATENDIMENTO
+  ,1 AS FLG_LIGA_CAMP
+  
+FROM U92047747.SQDAA_FT_COMP_ATM_CMV CMP
+INNER JOIN 
+  INTMKT.FT_ATENDIMENTO_URA CR ON CMP.NUM_NTC = CR.CD_NUMERO_TELEFONE 
+WHERE 0 = 0  
+  AND CR.SK_DATA BETWEEN 20201020 AND 20201231 
+GROUP BY 
+    TRUNC(CMP.DAT_MOVIMENTO)
+  ,CMP.NUM_NTC
+  ,CMP.DW_NUM_NTC
+  ,CMP.STS_ATENDIMENTO
+;
+
+
+DROP TABLE TMP_SQDAA_CMP_PRF_DIG_CMV_01C;
+CREATE TABLE TMP_SQDAA_CMP_PRF_DIG_CMV_01C COMPRESS FOR QUERY HIGH PARALLEL 256 NOLOGGING AS
+SELECT /*+PARALLEL (32)*/---------------------------------------------------------------------------------------ETAPA 01c CROSS 
+  DISTINCT
+	TRUNC(CMP.DAT_MOVIMENTO) AS DAT_MOVIMENTO
+	,CMP.NUM_NTC
+	,CMP.DW_NUM_NTC
+	,CMP.STS_ATENDIMENTO
+	,CASE WHEN AC.NUM_NTC IS NULL THEN 0 ELSE 1 END AS FLG_ACESSA
+	,CASE WHEN CR.NUM_NTC IS NULL THEN 0 ELSE 1 END AS FLG_LIGA
+	,MAX(CASE WHEN CMP.NUM_NTC = AC.NUM_NTC AND CMP.NUM_NTC = CR.NUM_NTC THEN 1
+                                          ELSE 0 END) AS FL_ACESSA_LIGA
+	--,COUNT(*) AS QT
+FROM U92047747.SQDAA_FT_COMP_ATM_CMV CMP
+LEFT JOIN TMP_SQDAA_CMP_PRF_DIG_CMV_01A AC ON AC.NUM_NTC = CMP.NUM_NTC
+LEFT JOIN TMP_SQDAA_CMP_PRF_DIG_CMV_01B CR ON CR.NUM_NTC = CMP.NUM_NTC
+--WHERE (CASE WHEN AC.NUM_NTC IS NULL THEN 0 ELSE 1 END) =1
+GROUP BY 
+	TRUNC(CMP.DAT_MOVIMENTO)
+  ,CMP.NUM_NTC
+  ,CMP.DW_NUM_NTC
+  ,CMP.STS_ATENDIMENTO
+  ,CASE WHEN AC.NUM_NTC IS NULL THEN 0 ELSE 1 END
+  ,CASE WHEN CR.NUM_NTC IS NULL THEN 0 ELSE 1 END
+  ,(CASE WHEN CMP.NUM_NTC = AC.NUM_NTC THEN 1
+            WHEN CMP.NUM_NTC = CR.NUM_NTC THEN 1
+                                          ELSE 0 END)
+  --,CMP.NUM_NTC HAVING COUNT(*) >1
+;
+GRANT SELECT ON U92047747.TMP_SQDAA_CMP_PRF_DIG_CMV_01C TO PUBLIC;
+COMMIT;
+
+
+/*
+SELECT MAX(dt_inicio_ligacao) AS DT_CR_ANALISE FROM INTMKT.FT_ATENDIMENTO_URA CR WHERE 0 = 0 AND CR.SK_DATA BETWEEN 20201020 AND 20201231;
+DT_CR_ANALISE 20201027
+
+
+SELECT 
+ MAX(TRUNC(MC.dat_inicio_atendimento)) AS DT_AC_ANALISE
+FROM 
+DWH.BI_FP_ASSINANTE_ATEND_FECHADO MC 
+      WHERE 0 = 0
+      AND MC.DW_METODO_CONTATO IN (81,411,451,701,709,791) 		  
+		  AND MC.DSC_OBSERVACAO_ATENDIMENTO LIKE '%Autenticação de usuário%'
+		  AND MC.DAT_INICIO_ATENDIMENTO BETWEEN TO_DATE('20201020', 'RRRRMMDD') AND  TO_DATE('20201231', 'RRRRMMDD')
+ ;
+DT_AC_ANALISE - 27/10/20
+
+
+SELECT DISTINCT TRUNC(DAT_MOVIMENTO) AS DAT_MOVIMENTO ,'01 BASE INICIAL' AS TP_BASE ,COUNT(NUM_NTC) QT ,COUNT(DISTINCT(NUM_NTC)) QT_UNICO FROM U92047747.SQDAA_FT_COMP_ATM_CMV GROUP BY TRUNC(DAT_MOVIMENTO)
+UNION ALL
+SELECT DISTINCT TRUNC(DAT_MOVIMENTO) AS DAT_MOVIMENTO ,'02 BASE AC' AS TP_BASE ,COUNT(NUM_NTC) QT ,COUNT(DISTINCT(NUM_NTC)) QT_UNICO FROM TMP_SQDAA_CMP_PRF_DIG_CMV_01A GROUP BY TRUNC(DAT_MOVIMENTO)
+UNION ALL
+SELECT DISTINCT TRUNC(DAT_MOVIMENTO) AS DAT_MOVIMENTO ,'03 BASE CR' AS TP_BASE ,COUNT(NUM_NTC) QT ,COUNT(DISTINCT(NUM_NTC)) QT_UNICO FROM TMP_SQDAA_CMP_PRF_DIG_CMV_01B GROUP BY TRUNC(DAT_MOVIMENTO)
+UNION ALL
+SELECT DISTINCT TRUNC(DAT_MOVIMENTO) AS DAT_MOVIMENTO ,'04 BASE CROSS CR E AC' AS TP_BASE ,COUNT(NUM_NTC) QT ,COUNT(DISTINCT(NUM_NTC)) QT_UNICO FROM TMP_SQDAA_CMP_PRF_DIG_CMV_01C GROUP BY TRUNC(DAT_MOVIMENTO)
+
+;
+
+DAT_MOVIMENTO             TP_BASE               QT                     QT_UNICO               
+------------------------- --------------------- ---------------------- ---------------------- 
+31/08/20                  01 BASE INICIAL       47428494               47428494               
+31/08/20                  01 BASE INICIAL       2164616                2164616                
+31/08/20                  02 BASE AC            30123                  30123                  
+31/08/20                  02 BASE AC            1975924                1975924                
+31/08/20                  03 BASE CR            37159                  37159                  
+31/08/20                  03 BASE CR            1056735                1056735                
+31/08/20                  04 BASE CROSS CR E AC 47428494               47428494               
+31/08/20                  04 BASE CROSS CR E AC 2164616                2164616   
+
+TESTE REALIZADO NA TABELA TMP_SQDAA_CMP_PRF_DIG_CMV_01C
+
+SELECT 'ACESSO' AS TP ,AC.*  FROM TMP_SQDAA_CMP_PRF_DIG_CMV_01A AC WHERE AC. num_ntc = '11930267755'
+UNION ALL
+SELECT 'CONTACT RATE' AS TP ,CR.* FROM TMP_SQDAA_CMP_PRF_DIG_CMV_01B CR WHERE CR. num_ntc = '11930267755'
+;
+
+-- num_ntc = '11932092384' -- LIGA E ACESSA
+-- num_ntc = '11932180562' -- LIGA E ACESSA
+-- num_ntc = '1120436224' -- SOMENTE LIGOU
+-- NUM_NTC = '1120613708' -- SÓ LIGA
+-- NUM_NTC = '11930267755' -- SÓ ACESSA
+
+*/
+/*
+--=========================================================================================================================================================================================
+
+		SAS - QUERY
+
+--=========================================================================================================================================================================================
+*/
